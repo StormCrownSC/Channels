@@ -11,7 +11,8 @@ import (
 )
 
 func main() {
-	stopCh := make(chan struct{})
+	stopCount := 3
+	stopCh := make(chan struct{}, stopCount)
 
 	ctx, cancel := signal.NotifyContext(context.Background(),
 		syscall.SIGINT,
@@ -20,17 +21,19 @@ func main() {
 	)
 	defer cancel()
 
-	go process(ctx, stopCh)
+	go process(stopCh)
 
 	select {
 	case <-ctx.Done():
 		fmt.Println("stopping server...")
-		stopCh <- struct{}{}
+		for i := 0; i < stopCount; i++ {
+			stopCh <- struct{}{}
+		}
 		fmt.Println("http server is stopped")
 	}
 }
 
-func process(ctx context.Context, stopCh <-chan struct{}) {
+func process(stopCh <-chan struct{}) {
 	requestsChan := forecast.RequestRandomGenerator(stopCh)
 
 	var (
@@ -42,7 +45,7 @@ func process(ctx context.Context, stopCh <-chan struct{}) {
 		previous forecast.ForecastPrediction
 	)
 
-	go processRequests(requestsChan, response)
+	go processRequests(requestsChan, response, stopCh)
 	output := aggregator(response)
 
 	for out := range output {
@@ -80,9 +83,10 @@ func aggregator(inputs [2]chan forecast.ForecastPrediction) <-chan forecast.Fore
 	return output
 }
 
-func processRequests(requestsChan <-chan forecast.ForecastRequest, response [2]chan forecast.ForecastPrediction) {
-	model1 := predict_models.NewModel1()
-	model2 := predict_models.NewModel2()
+func processRequests(requestsChan <-chan forecast.ForecastRequest, response [2]chan forecast.ForecastPrediction,
+	stopCh <-chan struct{}) {
+	model1 := predict_models.NewModel1(stopCh)
+	model2 := predict_models.NewModel2(stopCh)
 
 	for request := range requestsChan {
 		response[0] <- model1.Predict(request)

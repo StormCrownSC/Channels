@@ -3,7 +3,6 @@ package predict_models
 import (
 	"awesomeProject/forecast"
 	"math/rand"
-	"sync"
 	"time"
 )
 
@@ -14,19 +13,36 @@ func randRange(min, max int) int {
 }
 
 type Model struct {
-	reqMax   int
-	reqCount int
-	mu       sync.Mutex
+	reqMax int
+	quotas <-chan struct{}
+}
+
+const RateLimitPeriod = time.Minute
+
+func createQuotas(stopChan <-chan struct{}, rateLimit int) <-chan struct{} {
+	quotas := make(chan struct{}, rateLimit)
+
+	for i := 0; i < rateLimit; i++ {
+		quotas <- struct{}{}
+	}
+
+	go func() {
+		tick := time.NewTicker(RateLimitPeriod / time.Duration(rateLimit))
+		defer tick.Stop()
+		for {
+			select {
+			case <-stopChan:
+				return
+			case _ = <-tick.C:
+				quotas <- struct{}{}
+			}
+		}
+	}()
+	return quotas
 }
 
 func (m *Model) Predict(req forecast.ForecastRequest) forecast.ForecastPrediction {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.reqCount++
-	if m.reqCount > m.reqMax+5 {
-		time.Sleep(time.Minute)
-		m.reqCount = 0
-	}
+	_ = <-m.quotas
 	return forecast.ForecastPrediction{
 		Location:           req.Location,
 		Time:               req.Time,
@@ -36,15 +52,19 @@ func (m *Model) Predict(req forecast.ForecastRequest) forecast.ForecastPredictio
 	}
 }
 
-func NewModel1() *Model {
+func NewModel1(stopChan <-chan struct{}) *Model {
+	rateLimit := 60
+	quotas := createQuotas(stopChan, rateLimit)
 	return &Model{
-		reqMax: 60,
-		mu:     sync.Mutex{},
+		reqMax: rateLimit,
+		quotas: quotas,
 	}
 }
-func NewModel2() *Model {
+func NewModel2(stopChan <-chan struct{}) *Model {
+	rateLimit := 90
+	quotas := createQuotas(stopChan, rateLimit)
 	return &Model{
-		reqMax: 90,
-		mu:     sync.Mutex{},
+		reqMax: rateLimit,
+		quotas: quotas,
 	}
 }
