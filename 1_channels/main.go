@@ -1,8 +1,8 @@
 package main
 
 import (
-	"awesomeProject/channels/forecast"
-	"awesomeProject/channels/predict_models"
+	"awesomeProject/1_channels/forecast"
+	"awesomeProject/1_channels/predict_models"
 	"context"
 	"fmt"
 	"os/signal"

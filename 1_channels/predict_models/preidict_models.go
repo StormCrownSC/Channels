@@ -1,7 +1,7 @@
 package predict_models
 
 import (
-	"awesomeProject/channels/forecast"
+	"awesomeProject/1_channels/forecast"
 	"math/rand"
 	"sync"
 	"time"
