@@ -97,6 +97,9 @@ func composer(requestsChan <-chan forecast.ForecastRequest, response [2]chan for
 		}()
 		wg.Wait()
 	}
+
+	close(response[0])
+	close(response[1])
 }
 
 func switchChange(change bool) bool {
