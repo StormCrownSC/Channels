@@ -20,7 +20,7 @@ func main() {
 	)
 	defer cancel()
 
-	go filter(stopCh)
+	go printer(stopCh)
 
 	select {
 	case <-ctx.Done():
@@ -30,78 +30,41 @@ func main() {
 	}
 }
 
-func filter(stopCh <-chan struct{}) {
+func printer(stopCh <-chan struct{}) {
 	requestsChan := forecast.RequestRandomGenerator(stopCh)
-
-	var (
-		response [2]chan forecast.ForecastPrediction = [2]chan forecast.ForecastPrediction{
-			make(chan forecast.ForecastPrediction),
-			make(chan forecast.ForecastPrediction),
-		}
-		change   bool
-		previous forecast.ForecastPrediction
-	)
-
-	go composer(requestsChan, response)
-	output := aggregator(response)
-
+	output := composer(requestsChan)
 	for out := range output {
-		if change {
-			if previous.ProbabilityPercent > out.ProbabilityPercent {
-				fmt.Println(previous)
-			} else {
-				fmt.Println(out)
-			}
-			change = switchChange(change)
-		} else {
-			previous = out
-			change = switchChange(change)
-		}
+		fmt.Println(out)
 	}
-
 }
 
-func aggregator(inputs [2]chan forecast.ForecastPrediction) <-chan forecast.ForecastPrediction {
-	output := make(chan forecast.ForecastPrediction)
-	var wg sync.WaitGroup
-	for _, in := range inputs {
-		wg.Add(1)
-		go func(int <-chan forecast.ForecastPrediction) {
-			defer wg.Done()
-			for x := range in {
-				output <- x
-			}
-		}(in)
-	}
-	go func() {
-		wg.Wait()
-		close(output)
-	}()
-	return output
-}
-
-func composer(requestsChan <-chan forecast.ForecastRequest, response [2]chan forecast.ForecastPrediction) {
+func composer(requestsChan <-chan forecast.ForecastRequest) (response chan forecast.ForecastPrediction) {
 	model1 := predict_models.NewModel1()
 	model2 := predict_models.NewModel2()
-	wg := sync.WaitGroup{}
 
-	for request := range requestsChan {
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			response[0] <- model1.Predict(request)
-		}()
-		go func() {
-			defer wg.Done()
-			response[1] <- model2.Predict(request)
-		}()
-		wg.Wait()
-	}
+	go func(model1, model2 *predict_models.Model) {
+		var model1Response, model2Response forecast.ForecastPrediction
+		wg := sync.WaitGroup{}
 
-	close(response[0])
-	close(response[1])
-}
+		for request := range requestsChan {
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				model1Response = model1.Predict(request)
+			}()
+			go func() {
+				defer wg.Done()
+				model2Response = model2.Predict(request)
+			}()
+			wg.Wait()
 
-func switchChange(change bool) bool {
-	return !change
+			if model1Response.ProbabilityPercent > model2Response.ProbabilityPercent {
+				fmt.Println(model1Response)
+			} else {
+				fmt.Println(model2Response)
+			}
+		}
+		close(response)
+	}(model1, model2)
+	return
 }
