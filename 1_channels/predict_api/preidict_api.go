@@ -29,6 +29,7 @@ func createQuotas(stopChan <-chan struct{}, rateLimit int) <-chan struct{} {
 		for {
 			select {
 			case <-stopChan:
+				close(quotas)
 				return
 			case _ = <-tick.C:
 				quotas <- struct{}{}
