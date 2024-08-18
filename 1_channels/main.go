@@ -2,7 +2,7 @@ package main
 
 import (
 	"awesomeProject/1_channels/forecast"
-	"awesomeProject/1_channels/predict_models"
+	"awesomeProject/1_channels/predict_api"
 	"context"
 	"fmt"
 	"os/signal"
@@ -25,24 +25,26 @@ func main() {
 	select {
 	case <-ctx.Done():
 		fmt.Println("stopping server...")
-		stopCh <- struct{}{}
-		fmt.Println("http server is stopped")
+		for i := 0; i < 3; i++ {
+			stopCh <- struct{}{}
+		}
+		fmt.Println("server is stopped")
 	}
 }
 
 func printer(stopCh <-chan struct{}) {
 	requestsChan := forecast.RequestRandomGenerator(stopCh)
-	output := composer(requestsChan)
+	output := composer(requestsChan, stopCh)
 	for out := range output {
 		fmt.Println(out)
 	}
 }
 
-func composer(requestsChan <-chan forecast.ForecastRequest) (response chan forecast.ForecastPrediction) {
-	model1 := predict_models.NewModel1()
-	model2 := predict_models.NewModel2()
+func composer(requestsChan <-chan forecast.ForecastRequest, stopChan <-chan struct{}) (response chan forecast.ForecastPrediction) {
+	model1 := predict_api.NewModel1(stopChan)
+	model2 := predict_api.NewModel2(stopChan)
 
-	go func(model1, model2 *predict_models.Model) {
+	go func(model1, model2 *predict_api.Model) {
 		var model1Response, model2Response forecast.ForecastPrediction
 		wg := sync.WaitGroup{}
 
