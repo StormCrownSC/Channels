@@ -20,7 +20,10 @@ func main() {
 	)
 	defer cancel()
 
-	go printer(stopCh)
+	model1 := predict_api.NewModel1(stopCh)
+	model2 := predict_api.NewModel2(stopCh)
+	requestsChan := forecast.RequestRandomGenerator(stopCh)
+	go printer(model1, model2, requestsChan)
 
 	select {
 	case <-ctx.Done():
@@ -32,17 +35,15 @@ func main() {
 	}
 }
 
-func printer(stopCh <-chan struct{}) {
-	requestsChan := forecast.RequestRandomGenerator(stopCh)
-	output := composer(requestsChan, stopCh)
+func printer(model1, model2 *predict_api.Model, requestsChan <-chan forecast.ForecastRequest) {
+	output := composer(model1, model2, requestsChan)
 	for out := range output {
 		fmt.Println(out)
 	}
 }
 
-func composer(requestsChan <-chan forecast.ForecastRequest, stopChan <-chan struct{}) (response chan forecast.ForecastPrediction) {
-	model1 := predict_api.NewModel1(stopChan)
-	model2 := predict_api.NewModel2(stopChan)
+func composer(model1, model2 *predict_api.Model, requestsChan <-chan forecast.ForecastRequest) (response chan forecast.ForecastPrediction) {
+	response = make(chan forecast.ForecastPrediction)
 
 	go func(model1, model2 *predict_api.Model) {
 		var model1Response, model2Response forecast.ForecastPrediction
@@ -61,9 +62,9 @@ func composer(requestsChan <-chan forecast.ForecastRequest, stopChan <-chan stru
 			wg.Wait()
 
 			if model1Response.ProbabilityPercent > model2Response.ProbabilityPercent {
-				fmt.Println(model1Response)
+				response <- model1Response
 			} else {
-				fmt.Println(model2Response)
+				response <- model2Response
 			}
 		}
 		close(response)
