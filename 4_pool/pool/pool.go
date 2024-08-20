@@ -3,40 +3,38 @@ package pool
 import (
 	"awesomeProject/4_pool/worker"
 	"fmt"
+	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type Pool struct {
 	workers      []*worker.Worker
-	taskQueue    chan func()
+	taskQueue    chan *worker.Task
 	workersCount uint64
 	queueSize    uint64
 	queueLength  *atomic.Int64
 	isClosed     atomic.Bool
-	isPaused     atomic.Bool
 }
 
 type Pooler interface {
-	Submit(act func(...interface{}), args ...interface{}) bool
-	SubmitWait() bool
-	Stop() bool
-	StopWait() bool
-	Pause() bool
-	Resume() bool
+	Submit(act func(...any), args ...any) error
+	SubmitWait(act func(...any), args ...any) error
+	Stop() error
+	StopWait() error
 }
 
 func NewPool(workersCount, queueSize uint64) (*Pool, error) {
 	if workersCount == 0 {
-		return nil, fmt.Errorf("workersCount must be greater than 0")
+		return nil, fmt.Errorf("workers count must be greater than 0")
 	}
 
 	pool := &Pool{
-		taskQueue:    make(chan func(), queueSize),
+		taskQueue:    make(chan *worker.Task, queueSize),
 		workersCount: workersCount,
 		queueSize:    queueSize,
 		queueLength:  &atomic.Int64{},
 		isClosed:     atomic.Bool{},
-		isPaused:     atomic.Bool{},
 	}
 
 	var index uint64 = 0
@@ -49,74 +47,82 @@ func NewPool(workersCount, queueSize uint64) (*Pool, error) {
 	return pool, nil
 }
 
-func (pool *Pool) Submit(act func(...interface{}), args ...interface{}) bool {
-	taskWithArgs := func() {
-		act(args...)
-	}
-
-	if pool.queueLength.Load() == int64(pool.queueSize) || pool.isClosed.Load() {
-		return false
-	}
-	pool.queueLength.Add(1)
-	pool.taskQueue <- taskWithArgs
-	return true
-}
-
-func (pool *Pool) SubmitWait() bool {
-	if pool.isPaused.Load() {
-		return false
-	}
-	for {
-		if pool.queueLength.Load() == 0 {
-			return true
-		}
-	}
-}
-
-func (pool *Pool) Stop() bool {
+func (pool *Pool) Submit(act func(...interface{}), args ...interface{}) error {
 	if pool.isClosed.Load() {
-		return false
+		return fmt.Errorf("worker pool is closed")
+	}
+
+	task := &worker.Task{
+		Action: act,
+		Args:   args,
+		WG:     nil,
+	}
+
+	for {
+		if pool.queueLength.Load() == int64(pool.queueSize) {
+			time.Sleep(100 * time.Nanosecond)
+			continue
+		}
+		pool.queueLength.Add(1)
+		pool.taskQueue <- task
+		break
+	}
+
+	return nil
+}
+
+func (pool *Pool) SubmitWait(act func(...interface{}), args ...interface{}) error {
+	if pool.isClosed.Load() {
+		return fmt.Errorf("worker pool is closed")
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	task := &worker.Task{
+		Action: act,
+		Args:   args,
+		WG:     &wg,
+	}
+
+	for {
+		if pool.queueLength.Load() == int64(pool.queueSize) {
+			time.Sleep(100 * time.Nanosecond)
+			continue
+		}
+		pool.queueLength.Add(1)
+		pool.taskQueue <- task
+		break
+	}
+
+	wg.Wait() // Ожидание выполнения задачи
+
+	return nil
+}
+
+func (pool *Pool) Stop() error {
+	if pool.isClosed.Load() {
+		return fmt.Errorf("worker pool already is closed")
 	}
 	pool.isClosed.Store(true)
 	close(pool.taskQueue)
 	for _, _worker := range pool.workers {
 		_worker.Stop()
 	}
-	return true
+	return nil
 }
 
-func (pool *Pool) StopWait() bool {
-	if pool.isClosed.Load() || pool.isPaused.Load() {
-		return false
+func (pool *Pool) StopWait() error {
+	if pool.isClosed.Load() {
+		return fmt.Errorf("worker pool already is closed")
 	}
 
 	pool.isClosed.Store(true)
 	close(pool.taskQueue)
 	for {
 		if pool.queueLength.Load() == 0 {
-			return false
+			return nil
 		}
+		time.Sleep(100 * time.Nanosecond)
 	}
-}
-
-func (pool *Pool) Pause() bool {
-	if pool.isPaused.Load() {
-		return false
-	}
-	for _, _worker := range pool.workers {
-		_worker.Pause()
-	}
-	pool.isPaused.Store(true)
-	return true
-}
-
-func (pool *Pool) Resume() bool {
-	if !pool.isPaused.Load() {
-		return false
-	}
-	for _, _worker := range pool.workers {
-		_worker.Resume()
-	}
-	pool.isPaused.Store(false)
-	return true
 }

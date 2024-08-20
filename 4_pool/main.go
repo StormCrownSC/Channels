@@ -4,7 +4,6 @@ import (
 	"awesomeProject/4_pool/pool"
 	"context"
 	"fmt"
-	"math/rand"
 	"os/signal"
 	"syscall"
 	"time"
@@ -41,22 +40,21 @@ func main() {
 }
 
 func poolExecutor(stopChan chan struct{}, _pool *pool.Pool) {
-	for i := 0; i < 100; i++ {
-		success := _pool.Submit(func(args ...interface{}) {
-			fmt.Println(fmt.Sprintf("Task executed with args %d", args))
-			time.Sleep(time.Duration(rand.Intn(i+1)*100) * time.Millisecond)
-		}, i)
-		if !success {
-			fmt.Println("task executed failed")
-		}
-		//time.Sleep(time.Duration(rand.Intn(i+1)*10) * time.Millisecond)
-	}
+	fmt.Println("Start waiting task")
+	_pool.SubmitWait(func(args ...interface{}) {
+		fmt.Println(fmt.Sprintf("Task executed with args %d", args))
+		time.Sleep(1 * time.Second)
+	}, 1000)
+	fmt.Println("Execute waiting task")
 
-	fmt.Println("Pool pause")
-	_pool.Pause()
-	time.Sleep(1 * time.Second)
-	_pool.Resume()
-	fmt.Println("Pool resume")
+	for i := 0; i < 100; i++ {
+		err := _pool.Submit(func(args ...interface{}) {
+			fmt.Println(fmt.Sprintf("Task executed with args %d", args))
+		}, i)
+		if err != nil {
+			fmt.Println(fmt.Sprintf("task executed failed [%s]", err))
+		}
+	}
 
 	// Waiting for tasks to complete and shutting down the pool
 	_pool.StopWait()
