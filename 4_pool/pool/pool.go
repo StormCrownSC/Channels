@@ -3,9 +3,7 @@ package pool
 import (
 	"awesomeProject/4_pool/worker"
 	"fmt"
-	"sync"
 	"sync/atomic"
-	"time"
 )
 
 type Pool struct {
@@ -55,14 +53,9 @@ func (pool *Pool) Submit(act func(...interface{}), args ...interface{}) error {
 	task := &worker.Task{
 		Action: act,
 		Args:   args,
-		WG:     nil,
 	}
 
 	for {
-		if pool.queueLength.Load() == int64(pool.queueSize) {
-			time.Sleep(100 * time.Nanosecond)
-			continue
-		}
 		pool.queueLength.Add(1)
 		pool.taskQueue <- task
 		break
@@ -76,26 +69,23 @@ func (pool *Pool) SubmitWait(act func(...interface{}), args ...interface{}) erro
 		return fmt.Errorf("worker pool is closed")
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-
+	done := make(chan struct{})
 	task := &worker.Task{
 		Action: act,
 		Args:   args,
-		WG:     &wg,
+		Done:   &done,
 	}
 
 	for {
-		if pool.queueLength.Load() == int64(pool.queueSize) {
-			time.Sleep(100 * time.Nanosecond)
-			continue
-		}
 		pool.queueLength.Add(1)
 		pool.taskQueue <- task
 		break
 	}
 
-	wg.Wait() // Ожидание выполнения задачи
+	_, ok := <-done
+	if !ok {
+		return fmt.Errorf("worker pool is closed")
+	}
 
 	return nil
 }
@@ -106,6 +96,7 @@ func (pool *Pool) Stop() error {
 	}
 	pool.isClosed.Store(true)
 	close(pool.taskQueue)
+	go pool.closeDoneChannel()
 	for _, _worker := range pool.workers {
 		_worker.Stop()
 	}
@@ -121,8 +112,19 @@ func (pool *Pool) StopWait() error {
 	close(pool.taskQueue)
 	for {
 		if pool.queueLength.Load() == 0 {
-			return nil
+			break
 		}
-		time.Sleep(100 * time.Nanosecond)
+	}
+	for _, _worker := range pool.workers {
+		_worker.Stop()
+	}
+	return nil
+}
+
+func (pool *Pool) closeDoneChannel() {
+	for task := range pool.taskQueue {
+		if task.Done != nil {
+			close(*task.Done)
+		}
 	}
 }

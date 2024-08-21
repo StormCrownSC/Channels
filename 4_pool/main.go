@@ -50,6 +50,7 @@ func poolExecutor(stopChan chan struct{}, _pool *pool.Pool) {
 	for i := 0; i < 100; i++ {
 		err := _pool.Submit(func(args ...interface{}) {
 			fmt.Println(fmt.Sprintf("Task executed with args %d", args))
+			time.Sleep(100 * time.Millisecond)
 		}, i)
 		if err != nil {
 			fmt.Println(fmt.Sprintf("task executed failed [%s]", err))

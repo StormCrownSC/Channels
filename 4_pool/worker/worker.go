@@ -1,14 +1,13 @@
 package worker
 
 import (
-	"sync"
 	"sync/atomic"
 )
 
 type Task struct {
 	Action func(...interface{})
 	Args   []interface{}
-	WG     *sync.WaitGroup
+	Done   *chan struct{}
 }
 
 type Worker struct {
@@ -36,16 +35,21 @@ func (worker *Worker) Start() {
 	go func() {
 		for {
 			select {
-			case task := <-worker.taskCh:
-				if task != nil {
-					task.Action(task.Args...)
-					if task.WG != nil {
-						task.WG.Done()
-					}
-					worker.queueLength.Add(-1)
-				}
 			case <-worker.closeCh:
 				return
+			default:
+				select {
+				case task := <-worker.taskCh:
+					if task != nil {
+						task.Action(task.Args...)
+						if task.Done != nil {
+							*task.Done <- struct{}{}
+						}
+						worker.queueLength.Add(-1)
+					}
+				case <-worker.closeCh:
+					return
+				}
 			}
 		}
 	}()
