@@ -1,7 +1,7 @@
 package main
 
 import (
-	"awesomeProject/3_taxis/mock"
+	"awesomeProject/3_taxis/taxi_api"
 	"awesomeProject/3_taxis/taxis"
 	"context"
 	"fmt"
@@ -11,51 +11,38 @@ import (
 	"time"
 )
 
-type TaxiService interface {
-	Name() string
-	Calc(a, b taxis.Point) (*taxis.Ride, error)
-}
-
-func calcRide(a, b taxis.Point, taxiServices []TaxiService) {
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var answers []taxis.Ride
+func calcRide(a, b taxis.Point, taxiServices []taxi_api.ApiTaxiService) {
+	var (
+		resultChan = make(chan taxi_api.TaxiInfo, len(taxiServices))
+		wg         sync.WaitGroup
+		answers    []taxi_api.TaxiInfo
+	)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	for _, t := range taxiServices {
 		wg.Add(1)
-		go func(service TaxiService) {
+		go func(service taxi_api.ApiTaxiService) {
 			defer wg.Done()
-
-			// Канал для получения результата или ошибки
-			resultChan := make(chan *taxis.Ride)
-			errorChan := make(chan error)
-
-			go func() {
-				taxiPrice, err := service.Calc(a, b)
-				if err != nil {
-					errorChan <- err
-					return
-				}
-				resultChan <- taxiPrice
-			}()
-
-			select {
-			case <-ctx.Done():
-				fmt.Println("The waiting time has expired")
-			case taxiPrice := <-resultChan:
-				mu.Lock()
-				answers = append(answers, *taxiPrice)
-				mu.Unlock()
-			case err := <-errorChan:
-				fmt.Println("Error from service:", err)
+			taxiPrice, err := service.Calc(ctx, a, b)
+			name := t.Name()
+			if err != nil {
+				taxiPrice = &taxis.Ride{Price: 0}
 			}
-			close(resultChan)
-			close(errorChan)
+			resultChan <- taxi_api.TaxiInfo{Name: name, Price: taxiPrice.Price, Error: err}
 		}(t)
 	}
+
 	wg.Wait()
+	close(resultChan)
+
+	for result := range resultChan {
+		if result.Error != nil {
+			fmt.Println("Error: ", result.Error)
+			continue
+		}
+		answers = append(answers, result)
+	}
 
 	// Сортировка результатов по цене
 	sort.SliceStable(answers, func(i, j int) bool {
@@ -68,40 +55,34 @@ func calcRide(a, b taxis.Point, taxiServices []TaxiService) {
 	}
 }
 
-func calcRideWithErrGroup(a, b taxis.Point, taxiServices []TaxiService) {
-	var answers []taxis.Ride
+func calcRideWithErrGroup(a, b taxis.Point, taxiServices []taxi_api.ApiTaxiService) {
+	var (
+		resultChan = make(chan taxi_api.TaxiInfo, len(taxiServices))
+	)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-
 	eg, ctx := errgroup.WithContext(ctx)
-
-	mu := &sync.Mutex{}
+	eg.SetLimit(len(taxiServices))
 
 	for _, t := range taxiServices {
-		service := t
-		go eg.Go(func() error {
-			taxiPrice, err := service.Calc(a, b)
+		t := t
+		eg.Go(func() error {
+			taxiPrice, err := t.Calc(ctx, a, b)
+			name := t.Name()
 			if err != nil {
 				return err
 			}
-			mu.Lock()
-			answers = append(answers, *taxiPrice)
-			mu.Unlock()
+			resultChan <- taxi_api.TaxiInfo{Name: name, Price: taxiPrice.Price}
 			return nil
 		})
 	}
 
 	if err := eg.Wait(); err != nil {
-		fmt.Println(err)
+		fmt.Println("wg err: ", err)
+	} else {
+		fmt.Println("All service completed successfully")
 	}
-
-	sort.SliceStable(answers, func(i, j int) bool {
-		return answers[i].Price < answers[j].Price
-	})
-
-	for _, answer := range answers {
-		fmt.Println(answer)
-	}
+	close(resultChan)
 }
 
 func main() {
@@ -113,12 +94,13 @@ func main() {
 		Lat: 55.650810,
 		Lon: 37.496776,
 	}
-	taxiServices := []TaxiService{
-		mock.NewMockBoltTaxi(),
-		mock.NewMockMaximTaxi(),
-		mock.NewMockGettTaxi(),
-		mock.NewMockYandexTaxi(),
+	taxiServices := []taxi_api.ApiTaxiService{
+		taxi_api.NewMockBoltTaxi(),
+		taxi_api.NewMockMaximTaxi(),
+		taxi_api.NewMockGettTaxi(),
+		taxi_api.NewMockYandexTaxi(),
 	}
 	calcRide(p1, p2, taxiServices)
+	fmt.Printf("\n\nWait group:\n")
 	calcRideWithErrGroup(p1, p2, taxiServices)
 }
