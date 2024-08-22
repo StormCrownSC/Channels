@@ -76,11 +76,8 @@ func (pool *Pool) SubmitWait(act func(...interface{}), args ...interface{}) erro
 		Done:   &done,
 	}
 
-	for {
-		pool.queueLength.Add(1)
-		pool.taskQueue <- task
-		break
-	}
+	pool.queueLength.Add(1)
+	pool.taskQueue <- task
 
 	_, ok := <-done
 	if !ok {
